@@ -1,0 +1,31 @@
+[project]
+name = "decomplexer"
+version = "0.1.0"
+description = "None"
+readme = "README.md"
+authors = [
+    { name = "name", email = "empty" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "httpx>=0.28.1",
+    "lxml>=6.1.1",
+]
+
+[project.optional-dependencies]
+playwright = [
+    "playwright>=1.40",
+]
+
+[project.scripts]
+decomplexer = "decomplexer.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.18,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
