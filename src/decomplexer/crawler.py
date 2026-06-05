@@ -18,10 +18,30 @@ SEARCH_DEFAULTS: dict[str, str] = {
     "Offset": "0",
     "Tekst": "",
     "Gdzie": "2",
-    "Status": "O",
+    "status": "0",
+    "Lacznik": "AND",
+    "Odstep": "0",
+    "rokOD": "",
+    "MiesiacOD": "",
+    "DzienOD": "",
+    "RokDO": "",
+    "MiesiacDo": "",
+    "Litera": "",
+    "Numer": "",
+    "Rok": "",
     "Limit": "100",
     "Sort": "4",
-    "search": "Szukaj",
+    "Rodzaj": "",
+    "Organ": "",
+    "Podmiot": "",
+    "Kategoria": "",
+    "ZmieniajacyLitera": "",
+    "ZmieniajacyNumer": "",
+    "ZmieniajacyRok": "",
+    "ZmienianyLitera": "",
+    "ZmienianyNumer": "",
+    "ZmienianyRok": "",
+    "search": "szukaj",
 }
 
 NEXT_PAGE_DATA: dict[str, str] = {
@@ -81,14 +101,14 @@ class Crawler:
         except Exception as exc:
             log.debug("search warm-up failed (continuing): %s", exc)
 
-        html = self.fetcher.post("Control?todo=znajdzAkt", SEARCH_DEFAULTS)
+        html = self.fetcher.post("Control", SEARCH_DEFAULTS)
         for page_no in range(1, _MAX_PAGES + 1):
             page = parse.parse_results_page(html)
             log.info("Page %d: %d acts (total=%s)", page_no, len(page.rows), page.total)
             yield page
             if not page.rows or not page.has_next or self._limit_reached():
                 return
-            html = self.fetcher.post("Control?todo=pokazStrone&what=next", NEXT_PAGE_DATA)
+            html = self.fetcher.post("Control", NEXT_PAGE_DATA)
 
     def _record_result_rows(self, rows: list[ResultRow]) -> None:
         for row in rows:
