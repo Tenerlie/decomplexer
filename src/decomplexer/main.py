@@ -19,6 +19,12 @@ def _build_config(args: argparse.Namespace) -> Config:
         cfg.data_dir = Path(args.data_dir)
     if args.fetcher:
         cfg.fetcher = args.fetcher
+    if args.browser_channel:
+        cfg.browser_channel = args.browser_channel
+    if args.browser_exe:
+        cfg.browser_executable_path = args.browser_exe
+    if getattr(args, "headful", False):
+        cfg.headless = False
     if args.concurrency is not None:
         cfg.concurrency = args.concurrency
     if args.min_delay is not None:
@@ -60,7 +66,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="decomplexer", description=__doc__)
     parser.add_argument("--base-url", help="Servlet base URL (overrides default/env)")
     parser.add_argument("--data-dir", help="Output directory for DB and files")
-    parser.add_argument("--fetcher", choices=["httpx", "playwright"], help="Network backend")
+    parser.add_argument("--fetcher", choices=["httpx", "playwright"],
+                        help="Network backend (playwright = Chrome clicks + httpx downloads)")
+    parser.add_argument("--browser-channel",
+                        help="Playwright browser channel: chrome (default) or msedge")
+    parser.add_argument("--browser-exe",
+                        help="Full path to the browser binary (if channel can't find it)")
+    parser.add_argument("--headful", action="store_true",
+                        help="Show the browser window (playwright backend; for debugging)")
     parser.add_argument("--concurrency", type=int, help="Parallel per-act workers (crawl)")
     parser.add_argument("--min-delay", type=float, help="Min seconds between requests")
     parser.add_argument("-v", "--verbose", action="count", default=0)

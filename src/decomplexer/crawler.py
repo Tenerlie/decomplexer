@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,43 +13,6 @@ from .fetcher import Fetcher
 from .parse import Metrics, ResultRow
 
 log = logging.getLogger("decomplexer")
-
-SEARCH_DEFAULTS: dict[str, str] = {
-    "todo": "znajdzAkt",
-    "Offset": "0",
-    "Tekst": "",
-    "Gdzie": "2",
-    "status": "0",
-    "Lacznik": "AND",
-    "Odstep": "0",
-    "rokOD": "",
-    "MiesiacOD": "",
-    "DzienOD": "",
-    "RokDO": "",
-    "MiesiacDo": "",
-    "Litera": "",
-    "Numer": "",
-    "Rok": "",
-    "Limit": "100",
-    "Sort": "4",
-    "Rodzaj": "",
-    "Organ": "",
-    "Podmiot": "",
-    "Kategoria": "",
-    "ZmieniajacyLitera": "",
-    "ZmieniajacyNumer": "",
-    "ZmieniajacyRok": "",
-    "ZmienianyLitera": "",
-    "ZmienianyNumer": "",
-    "ZmienianyRok": "",
-    "search": "szukaj",
-}
-
-NEXT_PAGE_DATA: dict[str, str] = {
-    "todo": "pokazStrone",
-    "what": "next",
-    "next": ">>> next",
-}
 
 _MAX_PAGES = 10_000
 
@@ -96,19 +60,16 @@ class Crawler:
                 self._scrape_one(row)
 
     def _iter_pages(self):
-        try:
-            self.fetcher.get("Control?todo=szukajAkt")
-        except Exception as exc:
-            log.debug("search warm-up failed (continuing): %s", exc)
-
-        html = self.fetcher.post("Control", SEARCH_DEFAULTS)
+        html = self.fetcher.open_search()
         for page_no in range(1, _MAX_PAGES + 1):
             page = parse.parse_results_page(html)
             log.info("Page %d: %d acts (total=%s)", page_no, len(page.rows), page.total)
             yield page
             if not page.rows or not page.has_next or self._limit_reached():
                 return
-            html = self.fetcher.post("Control", NEXT_PAGE_DATA)
+            html = self.fetcher.next_page()
+            if html is None:
+                return
 
     def _record_result_rows(self, rows: list[ResultRow]) -> None:
         for row in rows:
@@ -172,14 +133,14 @@ class Crawler:
         if m is None:
             return
         if m.content_file:
-            dest = adir / "content" / m.content_file.filename
+            dest = adir / "content" / _safe_name(m.content_file.filename)
             if dest.exists():
                 payload.content_local_path = str(dest)
             else:
                 name = self.fetcher.download(m.content_file.url, dest)
                 payload.content_local_path = str(dest.with_name(name))
         for att in m.attachments:
-            dest = adir / "attachments" / att.filename
+            dest = adir / "attachments" / _safe_name(att.filename)
             if dest.exists():
                 payload.attachment_paths[att.filename] = str(dest)
             else:
@@ -245,3 +206,9 @@ class Crawler:
 def _query_param(url: str, key: str) -> str | None:
     vals = parse_qs(urlparse(url).query).get(key)
     return vals[0] if vals else None
+
+_ILLEGAL_FS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+def _safe_name(filename: str) -> str:
+    name = _ILLEGAL_FS.sub("_", filename or "").rstrip(" .")
+    return name or "file"

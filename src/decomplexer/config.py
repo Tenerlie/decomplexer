@@ -23,6 +23,9 @@ class Config:
     backoff_base: float = 1.5
 
     fetcher: str = "httpx"
+    browser_channel: str = "chrome"
+    browser_executable_path: str | None = None
+    headless: bool = True
 
     limit: int | None = None
     dry_run: bool = False

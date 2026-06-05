@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
@@ -8,12 +9,16 @@ from urllib.parse import urljoin
 
 import httpx
 
+from . import site
 from .config import CHARSET, Config
+
+log = logging.getLogger("decomplexer")
 
 @runtime_checkable
 class Fetcher(Protocol):
+    def open_search(self) -> str: ...
+    def next_page(self) -> str | None: ...
     def get(self, url: str) -> str: ...
-    def post(self, url: str, data: dict[str, str]) -> str: ...
     def download(self, url: str, dest: Path) -> str: ...
     def close(self) -> None: ...
 
@@ -49,11 +54,27 @@ class HttpxFetcher:
             headers={"User-Agent": "decomplexer/0.1 (acts-harvester)"},
         )
 
+    def open_search(self) -> str:
+        try:
+            self.get(site.SEARCH_PAGE)
+        except FetchError as exc:
+            log.debug("search warm-up failed: %s", exc)
+        return self.post(site.CONTROL, site.SEARCH_DEFAULTS)
+
+    def next_page(self) -> str | None:
+        return self.post(site.CONTROL, site.NEXT_PAGE_DATA)
+
     def get(self, url: str) -> str:
         return self._text(self._request("GET", url))
 
     def post(self, url: str, data: dict[str, str]) -> str:
         return self._text(self._request("POST", url, data=data))
+
+    def set_cookies(self, cookies: dict[str, str]) -> None:
+        self._client.cookies.update(cookies)
+
+    def set_header(self, name: str, value: str) -> None:
+        self._client.headers[name] = value
 
     def download(self, url: str, dest: Path) -> str:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +152,7 @@ def _content_disposition_filename(header: str) -> str | None:
 
 def build_fetcher(config: Config) -> Fetcher:
     if config.fetcher == "playwright":
-        from .playwright_fetcher import PlaywrightFetcher
+        from .playwright_fetcher import HybridFetcher
 
-        return PlaywrightFetcher(config)
+        return HybridFetcher(config)
     return HttpxFetcher(config)

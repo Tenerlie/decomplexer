@@ -20,38 +20,72 @@ Parsing never uses positional XPath (which shatters on this malformed legacy
 markup). It anchors on stable markers instead: form `name=`, `show=`/`file=`
 query params, and the metrics **label text**.
 
+## Backends
+
+- **`playwright` (use this for the live site).** Drives real Google Chrome to
+  click the search/pagination buttons, then reuses the browser's session cookies
+  with httpx for the act pages and file downloads. The live servlet rejects a
+  plain scripted form POST (it 404s), so the browser step is required.
+- **`httpx` (default; offline/tests only).** Pure HTTP. Works against the bundled
+  fixture server and the test suite, but **not** the live servlet.
+
 ## Setup
 
 ```bash
-uv sync
-# optional browser backend:
-#   uv sync --extra playwright && uv run playwright install chromium
+uv sync                       # base (httpx + tests)
+uv sync --extra playwright    # add the browser backend for the live site
 ```
 
-## Usage
+No `playwright install` is needed — the browser backend launches your installed
+**Google Chrome** (`channel="chrome"`), so nothing is downloaded through the
+proxy. Edge works too: `--browser-channel msedge`.
 
-Run from inside the corporate network (the app must be reachable).
+## Usage (live site)
+
+Run from inside the corporate network, with the **playwright** backend:
 
 ```bash
-# Full harvest (resumable — safe to re-run after an interruption)
-uv run decomplexer --base-url http://server.mycompany.com/Akty/Servlet/ crawl
+# Smoke test first: 5 acts, parse + record, download nothing
+uv run decomplexer --base-url https://server.mycompany.com/Akty/Servlet/ \
+    --fetcher playwright crawl --limit 5 --dry-run
 
-# Smoke test first: 5 acts, parse + record but download nothing
-uv run decomplexer --base-url <url> crawl --limit 5 --dry-run
-# then 5 acts for real
-uv run decomplexer --base-url <url> crawl --limit 5
+# Full harvest (resumable — safe to re-run after an interruption)
+uv run decomplexer --base-url <url> --fetcher playwright crawl
 
 # Incremental: walk newest-first, stop at the first act already in the DB
-uv run decomplexer --base-url <url> update
+uv run decomplexer --base-url <url> --fetcher playwright update
 
-# Re-export the relations map / print counts from the DB
+# Re-export the relations map / print counts from the DB (no network)
 uv run decomplexer export
 uv run decomplexer stats
 ```
 
-Useful global flags: `--data-dir`, `--concurrency`, `--min-delay`, `--fetcher
-{httpx,playwright}`, `-v`/`-vv`. The base URL can also be set via the
-`ACTS_BASE_URL` env var.
+Useful global flags: `--data-dir`, `--concurrency`, `--min-delay`,
+`--browser-channel {chrome,msedge}`, `--browser-exe <path>`, `--headful`
+(show the window), `-v`/`-vv`. Base URL can also come from `ACTS_BASE_URL`.
+
+## Running on Windows (production)
+
+This is the prod target. PowerShell:
+
+```powershell
+uv sync --extra playwright
+$env:NO_PROXY = "server.mycompany.com"   # httpx half must reach the intranet direct
+uv run decomplexer --base-url https://server.mycompany.com/Akty/Servlet/ `
+    --fetcher playwright --data-dir C:\acts crawl --limit 5 --dry-run
+```
+
+Notes:
+- **Proxy.** Chrome uses the system proxy automatically (same as your browser),
+  so the search/pagination clicks just work. The httpx half (act pages +
+  downloads) honours `HTTPS_PROXY`/`NO_PROXY` — set `NO_PROXY` to include the
+  acts host so those go direct.
+- **Browser.** Defaults to installed Chrome. If it isn't found, use
+  `--browser-channel msedge` or `--browser-exe "C:\Path\to\chrome.exe"`.
+- **Paths.** Keep `--data-dir` short (e.g. `C:\acts`) to stay clear of the
+  260-char path limit; downloaded filenames are sanitised for Windows.
+- **TLS.** If httpx hits a corporate-CA error, set `$env:SSL_CERT_FILE` to the
+  CA `.pem` (or run the harvest from a box where the CA is trusted).
 
 ## Output
 
