@@ -62,7 +62,25 @@ uv run decomplexer stats
 
 Useful global flags: `--data-dir`, `--concurrency`, `--min-delay`,
 `--browser-channel {chrome,msedge}`, `--browser-exe <path>`, `--headful`
-(show the window), `-v`/`-vv`. Base URL can also come from `ACTS_BASE_URL`.
+(show the window), `-v`/`-vv`, `--log-file <path>`, `--no-file-log`.
+
+### Setting the domain
+
+The host lives in exactly one place. To point at the real server, in order of
+precedence: pass `--base-url`, set the `ACTS_BASE_URL` env var, or edit the
+single `DEFAULT_BASE_URL` constant in `config.py` (marked `← SET THE REAL DOMAIN
+HERE`). A bare host is accepted and expanded — `--base-url server.real.com`
+becomes `http://server.real.com/Akty/Servlet/`. No other module contains a host
+literal, so swapping domains is a one-line change.
+
+### Logging
+
+Logging is sacred here: **every** URL loaded, button clicked, and file
+downloaded is logged. The console honours `-v`/`-vv` (default = warnings only),
+while a persistent, rotating audit file at `<data-dir>/logs/decomplexer.log`
+**always** records the full DEBUG-level detail — so even a quiet run is fully
+reconstructable afterwards. Override the path with `--log-file`, or turn the
+file off with `--no-file-log`.
 
 ## Running on Windows (production)
 
@@ -97,6 +115,7 @@ acts_repo_gather/data/
       content/<document>
       attachments/<files>
   exports/relations.{csv,json,graphml}
+  logs/decomplexer.log        # full audit trail (every URL/click/download)
 ```
 
 ### Database
@@ -124,7 +143,8 @@ downloads), so the whole crawl loop is exercised without network access.
 
 | Module                 | Responsibility                                   |
 |------------------------|--------------------------------------------------|
-| `config.py`            | Runtime config, charset, paths                   |
+| `config.py`            | Runtime config, charset, paths, the single host  |
+| `logsetup.py`          | Dual-sink logging (console + rotating audit file)|
 | `signatures.py`        | Signature normalization (`UZ/139/2026` ⇄ forms)  |
 | `fetcher.py`           | `Fetcher` interface + `HttpxFetcher`             |
 | `playwright_fetcher.py`| Optional drop-in browser backend                 |

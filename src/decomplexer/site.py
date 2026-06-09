@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 CONTROL = "Control"
+
 SEARCH_PAGE = "Control?todo=szukajAkt"
 
 SEARCH_DEFAULTS: dict[str, str] = {

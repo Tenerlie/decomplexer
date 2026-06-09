@@ -6,15 +6,18 @@ import sys
 from pathlib import Path
 
 from . import exporters
-from .config import Config
+from .config import Config, normalize_base_url
 from .crawler import Crawler
 from .db import Database
 from .fetcher import build_fetcher
+from .logsetup import setup_logging
+
+log = logging.getLogger("decomplexer")
 
 def _build_config(args: argparse.Namespace) -> Config:
     cfg = Config()
     if args.base_url:
-        cfg.base_url = args.base_url
+        cfg.base_url = normalize_base_url(args.base_url)
     if args.data_dir:
         cfg.data_dir = Path(args.data_dir)
     if args.fetcher:
@@ -29,6 +32,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         cfg.concurrency = args.concurrency
     if args.min_delay is not None:
         cfg.min_delay = args.min_delay
+    if args.log_file:
+        cfg.log_file = Path(args.log_file)
     if getattr(args, "limit", None) is not None:
         cfg.limit = args.limit
     if getattr(args, "dry_run", False):
@@ -49,7 +54,7 @@ def _run_crawl(cfg: Config, *, update: bool) -> None:
             exporters.export_all(database, cfg.exports_dir)
     finally:
         fetcher.close()
-    logging.getLogger("decomplexer").info("Done. %s", stats)
+    log.info("Done. %s", stats)
 
 def _run_export(cfg: Config) -> None:
     with Database(cfg.db_path) as database:
@@ -64,8 +69,8 @@ def _run_stats(cfg: Config) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="decomplexer", description=__doc__)
-    parser.add_argument("--base-url", help="Servlet base URL (overrides default/env)")
-    parser.add_argument("--data-dir", help="Output directory for DB and files")
+    parser.add_argument("--base-url", help="Servlet base URL or bare host (overrides default/env)")
+    parser.add_argument("--data-dir", help="Output directory for DB, files, and logs")
     parser.add_argument("--fetcher", choices=["httpx", "playwright"],
                         help="Network backend (playwright = Chrome clicks + httpx downloads)")
     parser.add_argument("--browser-channel",
@@ -76,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Show the browser window (playwright backend; for debugging)")
     parser.add_argument("--concurrency", type=int, help="Parallel per-act workers (crawl)")
     parser.add_argument("--min-delay", type=float, help="Min seconds between requests")
+    parser.add_argument("--log-file", help="Path for the persistent audit log "
+                        "(default: <data-dir>/logs/decomplexer.log)")
+    parser.add_argument("--no-file-log", action="store_true",
+                        help="Disable the persistent file log (console only)")
     parser.add_argument("-v", "--verbose", action="count", default=0)
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -93,10 +102,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    level = logging.WARNING - 10 * min(args.verbose, 2)
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
-
     cfg = _build_config(args)
+    log_file = None if args.no_file_log else cfg.resolved_log_file
+    setup_logging(verbosity=args.verbose, log_file=log_file)
+    if log_file is not None:
+        log.debug("audit log: %s", log_file)
 
     if args.command == "crawl":
         _run_crawl(cfg, update=False)

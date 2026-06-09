@@ -106,13 +106,18 @@ class Crawler:
         try:
             show = row.show or signatures.to_url(row.signature)
             status = row.status or "o"
+            log.info("Act %s: fetching frameset (show=%s, status=%s)",
+                     row.signature, show, status)
             frameset = self.fetcher.get(f"Control?show={show}&status={status}")
             metryke_url = parse.parse_act_frameset(frameset)
             if not metryke_url:
                 payload.error = "no pokazMetryke frame found"
+                log.warning("Act %s: no pokazMetryke frame in frameset", row.signature)
                 return payload
 
             payload.id_aktu = _query_param(metryke_url, "IdAktu")
+            log.debug("Act %s: IdAktu=%s, metrics at %s",
+                      row.signature, payload.id_aktu, metryke_url)
             metrics_html = self.fetcher.get(metryke_url)
             payload.metrics_html = metrics_html
             payload.metrics = parse.parse_metrics(metrics_html)
@@ -121,7 +126,9 @@ class Crawler:
             adir.mkdir(parents=True, exist_ok=True)
             (adir / "metrics.html").write_text(metrics_html, encoding="utf-8")
 
-            if not self.cfg.dry_run:
+            if self.cfg.dry_run:
+                log.debug("Act %s: dry-run, skipping downloads", row.signature)
+            else:
                 self._download_files(payload, adir)
         except Exception as exc:
             payload.error = str(exc)
@@ -132,16 +139,20 @@ class Crawler:
         m = payload.metrics
         if m is None:
             return
+        sig = payload.row.signature
         if m.content_file:
             dest = adir / "content" / _safe_name(m.content_file.filename)
             if dest.exists():
+                log.debug("Act %s: content already on disk, skipping %s", sig, dest.name)
                 payload.content_local_path = str(dest)
             else:
                 name = self.fetcher.download(m.content_file.url, dest)
                 payload.content_local_path = str(dest.with_name(name))
+        log.debug("Act %s: %d attachment(s) to fetch", sig, len(m.attachments))
         for att in m.attachments:
             dest = adir / "attachments" / _safe_name(att.filename)
             if dest.exists():
+                log.debug("Act %s: attachment already on disk, skipping %s", sig, dest.name)
                 payload.attachment_paths[att.filename] = str(dest)
             else:
                 name = self.fetcher.download(att.url, dest)
@@ -151,6 +162,7 @@ class Crawler:
         row = payload.row
         m = payload.metrics
         if m is None:
+            log.debug("Act %s: no metrics, left at 'discovered' for retry", row.signature)
             return
 
         f = m.fields
@@ -184,6 +196,9 @@ class Crawler:
             if local:
                 self.db.mark_downloaded(row.signature, att.filename, local)
 
+        log.info("Act %s: metrics_done (%d attachments, %d relations)",
+                 row.signature, len(m.attachments), len(m.relations))
+
         if payload.error:
             return
 
@@ -191,6 +206,7 @@ class Crawler:
             return
 
         self.db.set_state(row.signature, db.STATE_FILES_DONE)
+        log.info("Act %s: files_done", row.signature)
 
     def _act_dir(self, signature: str) -> Path:
         return (
