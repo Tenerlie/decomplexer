@@ -6,34 +6,36 @@ the metadata, the act document, all attachments, and the web of relations
 between acts — into a clean local tree + SQLite DB, and supports cheap
 incremental re-runs.
 
-## Why it works without a browser
+## How it works (the hybrid model)
 
-Every page is plain server-rendered HTML (frames are just URLs, forms are plain
-POSTs, the only JavaScript is cosmetic), and the site needs no login on the
-intranet. So the default backend is `httpx` + `lxml` — far faster and lighter
-than driving a browser for ~30k requests. A `playwright` backend is available as
-a drop-in fallback behind the same `Fetcher` interface if the live site ever
-turns out to need a real browser; switching is a single `--fetcher` flag and
-changes nothing else.
+The live servlet **rejects a scripted form POST** (it 404s outside a real
+browser), so a plain HTTP client cannot start a search on its own. The default
+**`playwright`** backend therefore drives real Google Chrome to *click* the
+"Szukaj" and ">>> następne" buttons, then hands the browser's session cookies to
+`httpx` for everything else — the ~30k act-page fetches and file downloads, which
+are ordinary GETs the cookie is enough for. So the browser does only the few
+stateful clicks; httpx does the heavy lifting.
 
 Parsing never uses positional XPath (which shatters on this malformed legacy
 markup). It anchors on stable markers instead: form `name=`, `show=`/`file=`
 query params, and the metrics **label text**.
 
+A run always starts by loading `Control?todo=szukajAkt` **directly** — bare
+`Control` is never probed first, because on this ancient app it always 404s.
+
 ## Backends
 
-- **`playwright` (use this for the live site).** Drives real Google Chrome to
-  click the search/pagination buttons, then reuses the browser's session cookies
-  with httpx for the act pages and file downloads. The live servlet rejects a
-  plain scripted form POST (it 404s), so the browser step is required.
-- **`httpx` (default; offline/tests only).** Pure HTTP. Works against the bundled
-  fixture server and the test suite, but **not** the live servlet.
+- **`playwright` — default; the only backend that works against the live site.**
+  Real Google Chrome clicks search/pagination; httpx (carrying the browser's
+  session) fetches act pages and streams downloads.
+- **`httpx` — offline/tests only (`--fetcher httpx`).** Pure HTTP. Drives the
+  bundled fixture server and the whole test suite, but **not** the live servlet.
 
 ## Setup
 
 ```bash
-uv sync                       # base (httpx + tests)
-uv sync --extra playwright    # add the browser backend for the live site
+uv sync --extra playwright    # default backend — needed for the live site
+uv sync                       # base only (httpx fixture server + tests)
 ```
 
 No `playwright install` is needed — the browser backend launches your installed
@@ -42,18 +44,19 @@ proxy. Edge works too: `--browser-channel msedge`.
 
 ## Usage (live site)
 
-Run from inside the corporate network, with the **playwright** backend:
+Run from inside the corporate network. Playwright is the default, so no
+`--fetcher` flag is needed:
 
 ```bash
 # Smoke test first: 5 acts, parse + record, download nothing
 uv run decomplexer --base-url https://server.mycompany.com/Akty/Servlet/ \
-    --fetcher playwright crawl --limit 5 --dry-run
+    crawl --limit 5 --dry-run
 
 # Full harvest (resumable — safe to re-run after an interruption)
-uv run decomplexer --base-url <url> --fetcher playwright crawl
+uv run decomplexer --base-url <url> crawl
 
 # Incremental: walk newest-first, stop at the first act already in the DB
-uv run decomplexer --base-url <url> --fetcher playwright update
+uv run decomplexer --base-url <url> update
 
 # Re-export the relations map / print counts from the DB (no network)
 uv run decomplexer export
@@ -90,7 +93,7 @@ This is the prod target. PowerShell:
 uv sync --extra playwright
 $env:NO_PROXY = "server.mycompany.com"   # httpx half must reach the intranet direct
 uv run decomplexer --base-url https://server.mycompany.com/Akty/Servlet/ `
-    --fetcher playwright --data-dir C:\acts crawl --limit 5 --dry-run
+    --data-dir C:\acts crawl --limit 5 --dry-run
 ```
 
 Notes:
@@ -146,8 +149,8 @@ downloads), so the whole crawl loop is exercised without network access.
 | `config.py`            | Runtime config, charset, paths, the single host  |
 | `logsetup.py`          | Dual-sink logging (console + rotating audit file)|
 | `signatures.py`        | Signature normalization (`UZ/139/2026` ⇄ forms)  |
-| `fetcher.py`           | `Fetcher` interface + `HttpxFetcher`             |
-| `playwright_fetcher.py`| Optional drop-in browser backend                 |
+| `fetcher.py`           | `Fetcher` interface + `HttpxFetcher` (offline)   |
+| `playwright_fetcher.py`| Default backend: Chrome clicks + httpx downloads |
 | `parse.py`             | Pure HTML parsers for the 4 page types           |
 | `db.py`                | SQLite schema + upserts                           |
 | `crawler.py`           | Orchestration, resume, incremental update        |
