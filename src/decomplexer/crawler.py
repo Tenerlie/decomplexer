@@ -34,42 +34,62 @@ class Crawler:
         self._processed = 0
 
     def crawl(self) -> None:
-        for page in self._iter_pages():
-            new_rows = [r for r in page.rows if not self._limit_reached()]
-            self._record_result_rows(new_rows)
+        self._walk_and_scrape(seen=set())
 
-            todo = [r for r in new_rows
+    def update(self) -> None:
+        seen: set[str] = set()
+        complete = self._walk_and_scrape(seen)
+        if complete:
+            self._reconcile(seen)
+        else:
+            log.warning("Walk did not complete (limit or error); skipping in-force "
+                        "reconciliation to avoid false revocations.")
+
+    def _walk_and_scrape(self, seen: set[str]) -> bool:
+        try:
+            html = self.fetcher.open_search()
+        except Exception as exc:
+            log.error("Search failed; aborting walk: %s", exc)
+            return False
+
+        for page_no in range(1, _MAX_PAGES + 1):
+            page = parse.parse_results_page(html)
+            log.info("Page %d: %d acts (total=%s)", page_no, len(page.rows), page.total)
+
+            rows = [r for r in page.rows if not self._limit_reached()]
+            for r in rows:
+                seen.add(r.signature)
+            self._record_result_rows(rows)
+            todo = [r for r in rows
                     if self.db.get_state(r.signature) != db.STATE_FILES_DONE]
             self._scrape_concurrent(todo)
 
             if self._limit_reached():
-                log.info("Reached --limit; stopping.")
-                break
-
-    def update(self) -> None:
-        for page in self._iter_pages():
-            for row in page.rows:
-                if self.db.has_act(row.signature):
-                    log.info("Hit known act %s; nothing newer to fetch. Done.",
-                             row.signature)
-                    return
-                if self._limit_reached():
-                    log.info("Reached --limit; stopping.")
-                    return
-                self._record_result_rows([row])
-                self._scrape_one(row)
-
-    def _iter_pages(self):
-        html = self.fetcher.open_search()
-        for page_no in range(1, _MAX_PAGES + 1):
-            page = parse.parse_results_page(html)
-            log.info("Page %d: %d acts (total=%s)", page_no, len(page.rows), page.total)
-            yield page
-            if not page.rows or not page.has_next or self._limit_reached():
-                return
-            html = self.fetcher.next_page()
+                log.info("Reached --limit; stopping (walk incomplete).")
+                return False
+            if not page.rows or not page.has_next:
+                return True
+            try:
+                html = self.fetcher.next_page()
+            except Exception as exc:
+                log.error("Pagination failed after page %d: %s", page_no, exc)
+                return False
             if html is None:
-                return
+                return True
+
+        log.warning("Hit _MAX_PAGES safety valve; walk treated as incomplete.")
+        return False
+
+    def _reconcile(self, seen: set[str]) -> None:
+        if not seen:
+            log.warning("In-force walk returned no acts; skipping reconciliation.")
+            return
+        dropped = self.db.in_force_signatures() - seen
+        for sig in sorted(dropped):
+            self.db.set_obowiazuje(sig, 0)
+            log.info("Act %s: no longer in the in-force results -> obowiazuje=0", sig)
+        log.info("Reconciliation: %d in force this run, %d newly lost force.",
+                 len(seen), len(dropped))
 
     def _record_result_rows(self, rows: list[ResultRow]) -> None:
         for row in rows:
@@ -77,6 +97,7 @@ class Crawler:
                 row.signature,
                 title=row.title or None,
                 status=row.status or None,
+                obowiazuje=1 if (row.status or "").lower() == "o" else 0,
                 data_uchwalenia=row.data_uchwalenia or None,
                 data_wygasniecia=row.data_wygasniecia or None,
                 state=None if self.db.has_act(row.signature) else db.STATE_DISCOVERED,
@@ -95,11 +116,6 @@ class Crawler:
                 payload = fut.result()
                 self._persist_payload(payload)
                 self._processed += 1
-
-    def _scrape_one(self, row: ResultRow) -> None:
-        payload = self._fetch_payload(row)
-        self._persist_payload(payload)
-        self._processed += 1
 
     def _fetch_payload(self, row: ResultRow) -> ActPayload:
         payload = ActPayload(row=row)
@@ -123,8 +139,10 @@ class Crawler:
             payload.metrics = parse.parse_metrics(metrics_html)
 
             adir = self._act_dir(row.signature)
-            adir.mkdir(parents=True, exist_ok=True)
-            (adir / "metrics.html").write_text(metrics_html, encoding="utf-8")
+            if self.cfg.keep_raw:
+                adir.mkdir(parents=True, exist_ok=True)
+                (adir / "metrics.html").write_text(metrics_html, encoding="utf-8")
+                log.debug("Act %s: kept raw metrics.html (--keep-raw)", row.signature)
 
             if self.cfg.dry_run:
                 log.debug("Act %s: dry-run, skipping downloads", row.signature)
@@ -144,19 +162,19 @@ class Crawler:
             dest = adir / "content" / _safe_name(m.content_file.filename)
             if dest.exists():
                 log.debug("Act %s: content already on disk, skipping %s", sig, dest.name)
-                payload.content_local_path = str(dest)
+                payload.content_local_path = self._rel(dest)
             else:
                 name = self.fetcher.download(m.content_file.url, dest)
-                payload.content_local_path = str(dest.with_name(name))
+                payload.content_local_path = self._rel(dest.with_name(name))
         log.debug("Act %s: %d attachment(s) to fetch", sig, len(m.attachments))
         for att in m.attachments:
             dest = adir / "attachments" / _safe_name(att.filename)
             if dest.exists():
                 log.debug("Act %s: attachment already on disk, skipping %s", sig, dest.name)
-                payload.attachment_paths[att.filename] = str(dest)
+                payload.attachment_paths[att.filename] = self._rel(dest)
             else:
                 name = self.fetcher.download(att.url, dest)
-                payload.attachment_paths[att.filename] = str(dest.with_name(name))
+                payload.attachment_paths[att.filename] = self._rel(dest.with_name(name))
 
     def _persist_payload(self, payload: ActPayload) -> None:
         row = payload.row
@@ -215,6 +233,12 @@ class Crawler:
             / signatures.year_of(signature)
             / signatures.to_slug(signature)
         )
+
+    def _rel(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.cfg.data_dir))
+        except ValueError:
+            return str(path)
 
     def _limit_reached(self) -> bool:
         return self.cfg.limit is not None and self._processed >= self.cfg.limit

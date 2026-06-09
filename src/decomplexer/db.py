@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS acts (
     attachment_count    INTEGER DEFAULT 0,
     raw_metrics_json    TEXT,
     state               TEXT NOT NULL DEFAULT 'discovered',
+    -- In-force flag (status=o). 1 while the act is current; flipped to 0 (with a
+    -- timestamp) when it drops out of the in-force search during `update`.
+    obowiazuje          INTEGER NOT NULL DEFAULT 1,
+    obowiazuje_changed_at REAL,
     scraped_at          REAL
 );
 
@@ -63,8 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_acts_state ON acts(state);
 """
 
 _ACT_COLUMNS = (
-    "id_aktu", "rodzaj", "title", "status", "data_uchwalenia", "data_wejscia",
-    "data_wygasniecia", "podmiot", "organ", "kategoria", "uwagi",
+    "id_aktu", "rodzaj", "title", "status", "obowiazuje", "data_uchwalenia",
+    "data_wejscia", "data_wygasniecia", "podmiot", "organ", "kategoria", "uwagi",
     "content_local_path", "attachment_count", "raw_metrics_json",
 )
 
@@ -76,7 +80,17 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(acts)")}
+        if "obowiazuje" not in have:
+            self.conn.execute(
+                "ALTER TABLE acts ADD COLUMN obowiazuje INTEGER NOT NULL DEFAULT 1"
+            )
+        if "obowiazuje_changed_at" not in have:
+            self.conn.execute("ALTER TABLE acts ADD COLUMN obowiazuje_changed_at REAL")
 
     def close(self) -> None:
         self.conn.close()
@@ -123,6 +137,17 @@ class Database:
             "SELECT signature FROM acts WHERE state != ? ORDER BY signature", (STATE_FILES_DONE,)
         )
         return [r["signature"] for r in cur.fetchall()]
+
+    def in_force_signatures(self) -> set[str]:
+        cur = self.conn.execute("SELECT signature FROM acts WHERE obowiazuje = 1")
+        return {r["signature"] for r in cur.fetchall()}
+
+    def set_obowiazuje(self, signature: str, value: int) -> None:
+        self.conn.execute(
+            "UPDATE acts SET obowiazuje = ?, obowiazuje_changed_at = ? WHERE signature = ?",
+            (value, time.time(), signature),
+        )
+        self.conn.commit()
 
     def upsert_attachment(self, act_signature: str, *, idx: int, filename: str,
                           display_name: str, description: str, file_url: str,
@@ -185,6 +210,12 @@ class Database:
             "acts": c.execute("SELECT COUNT(*) FROM acts").fetchone()[0],
             "acts_files_done": c.execute(
                 "SELECT COUNT(*) FROM acts WHERE state = ?", (STATE_FILES_DONE,)
+            ).fetchone()[0],
+            "acts_in_force": c.execute(
+                "SELECT COUNT(*) FROM acts WHERE obowiazuje = 1"
+            ).fetchone()[0],
+            "acts_lost_force": c.execute(
+                "SELECT COUNT(*) FROM acts WHERE obowiazuje = 0"
             ).fetchone()[0],
             "attachments": c.execute("SELECT COUNT(*) FROM attachments").fetchone()[0],
             "attachments_downloaded": c.execute(

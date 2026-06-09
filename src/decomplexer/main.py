@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import sys
 from pathlib import Path
 
-from . import exporters
+from . import exporters, prune
 from .config import Config, normalize_base_url
 from .crawler import Crawler
 from .db import Database
@@ -13,6 +14,15 @@ from .fetcher import build_fetcher
 from .logsetup import setup_logging
 
 log = logging.getLogger("decomplexer")
+
+def _install_data_dir_tools(data_dir: Path) -> None:
+    dest = data_dir / "prune_not_in_force.py"
+    if dest.exists():
+        return
+    try:
+        shutil.copy(prune.__file__, dest)
+    except OSError as exc:
+        log.debug("could not install prune script into %s: %s", data_dir, exc)
 
 def _build_config(args: argparse.Namespace) -> Config:
     cfg = Config()
@@ -40,7 +50,10 @@ def _build_config(args: argparse.Namespace) -> Config:
         cfg.limit = args.limit
     if getattr(args, "dry_run", False):
         cfg.dry_run = True
+    if getattr(args, "keep_raw", False):
+        cfg.keep_raw = True
     cfg.ensure_dirs()
+    _install_data_dir_tools(cfg.data_dir)
     return cfg
 
 def _run_crawl(cfg: Config, *, update: bool) -> None:
@@ -69,6 +82,9 @@ def _run_stats(cfg: Config) -> None:
         for k, v in database.stats().items():
             print(f"{k}: {v}")
 
+def _run_prune(cfg: Config, *, apply: bool) -> None:
+    prune.prune(cfg.data_dir, apply=apply)
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="decomplexer", description=__doc__)
     parser.add_argument("--base-url", help="servlet base URL or bare host (overrides default/env)")
@@ -96,13 +112,22 @@ def main(argv: list[str] | None = None) -> int:
     p_crawl = sub.add_parser("crawl", help="Full harvest (resumable)")
     p_crawl.add_argument("--limit", type=int, help="Cap acts processed (smoke test)")
     p_crawl.add_argument("--dry-run", action="store_true", help="Parse + record, download nothing")
+    p_crawl.add_argument("--keep-raw", action="store_true",
+                         help="Also save the raw metrics.html page next to the files")
 
-    p_update = sub.add_parser("update", help="Incremental: stop at first known act")
+    p_update = sub.add_parser("update",
+                              help="Full walk + reconcile in-force status (obowiazuje)")
     p_update.add_argument("--limit", type=int, help="Cap acts processed")
     p_update.add_argument("--dry-run", action="store_true")
+    p_update.add_argument("--keep-raw", action="store_true",
+                          help="Also save the raw metrics.html page next to the files")
 
     sub.add_parser("export", help="(Re)write the relations map from the DB")
     sub.add_parser("stats", help="Print DB counts")
+
+    p_prune = sub.add_parser("prune", help="Delete files of acts no longer in force")
+    p_prune.add_argument("--apply", action="store_true",
+                         help="Actually delete (default is a safe dry run)")
 
     args = parser.parse_args(argv)
 
@@ -120,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
         _run_export(cfg)
     elif args.command == "stats":
         _run_stats(cfg)
+    elif args.command == "prune":
+        _run_prune(cfg, apply=args.apply)
     return 0
 
 if __name__ == "__main__":

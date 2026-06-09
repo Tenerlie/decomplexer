@@ -52,6 +52,7 @@ class Config:
 
     limit: int | None = None
     dry_run: bool = False
+    keep_raw: bool = False
 
     @property
     def control_url(self) -> str:
