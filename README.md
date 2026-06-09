@@ -1,7 +1,7 @@
 # decomplexer
 
 Harvester for the legacy company acts repository (the ancient
-`server.mycompany.com/Akty/Servlet/Control` Java app). It mirrors every act —
+`server.mycompany.com/Akty/servlet/Control` Java app). It mirrors every act —
 the metadata, the act document, all attachments, and the web of relations
 between acts — into a clean local tree + SQLite DB, and supports cheap
 incremental re-runs.
@@ -49,7 +49,7 @@ Run from inside the corporate network. Playwright is the default, so no
 
 ```bash
 # Smoke test first: 5 acts, parse + record, download nothing
-uv run decomplexer --base-url https://server.mycompany.com/Akty/Servlet/ \
+uv run decomplexer --base-url https://server.mycompany.com/Akty/servlet/ \
     crawl --limit 5 --dry-run
 
 # Full harvest (resumable — safe to re-run after an interruption)
@@ -63,7 +63,8 @@ uv run decomplexer export
 uv run decomplexer stats
 ```
 
-Useful global flags: `--data-dir`, `--concurrency`, `--min-delay`,
+Useful global flags: `--data-dir`, `--concurrency`, `--min-delay`, `--insecure`
+(skip TLS verification for the self-signed legacy cert),
 `--browser-channel {chrome,msedge}`, `--browser-exe <path>`, `--headful`
 (show the window), `-v`/`-vv`, `--log-file <path>`, `--no-file-log`.
 
@@ -73,7 +74,7 @@ The host lives in exactly one place. To point at the real server, in order of
 precedence: pass `--base-url`, set the `ACTS_BASE_URL` env var, or edit the
 single `DEFAULT_BASE_URL` constant in `config.py` (marked `← SET THE REAL DOMAIN
 HERE`). A bare host is accepted and expanded — `--base-url server.real.com`
-becomes `http://server.real.com/Akty/Servlet/`. No other module contains a host
+becomes `https://server.real.com/Akty/servlet/`. No other module contains a host
 literal, so swapping domains is a one-line change.
 
 ### Logging
@@ -92,7 +93,7 @@ This is the prod target. PowerShell:
 ```powershell
 uv sync --extra playwright
 $env:NO_PROXY = "server.mycompany.com"   # httpx half must reach the intranet direct
-uv run decomplexer --base-url https://server.mycompany.com/Akty/Servlet/ `
+uv run decomplexer --base-url https://server.mycompany.com/Akty/servlet/ `
     --data-dir C:\acts crawl --limit 5 --dry-run
 ```
 
@@ -105,8 +106,11 @@ Notes:
   `--browser-channel msedge` or `--browser-exe "C:\Path\to\chrome.exe"`.
 - **Paths.** Keep `--data-dir` short (e.g. `C:\acts`) to stay clear of the
   260-char path limit; downloaded filenames are sanitised for Windows.
-- **TLS.** If httpx hits a corporate-CA error, set `$env:SSL_CERT_FILE` to the
-  CA `.pem` (or run the harvest from a box where the CA is trusted).
+- **TLS.** The legacy box serves HTTPS with a self-signed / private-CA cert. The
+  blunt fix is `--insecure`, which skips verification on both the Chrome
+  navigation and the httpx downloads (fine for this intranet-only tool). The
+  tidy alternative: point `$env:SSL_CERT_FILE` at the CA `.pem` (or run from a
+  box where the CA is already trusted) and leave verification on.
 
 ## Output
 

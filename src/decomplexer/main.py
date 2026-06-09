@@ -32,6 +32,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         cfg.concurrency = args.concurrency
     if args.min_delay is not None:
         cfg.min_delay = args.min_delay
+    if args.insecure:
+        cfg.verify_tls = False
     if args.log_file:
         cfg.log_file = Path(args.log_file)
     if getattr(args, "limit", None) is not None:
@@ -69,7 +71,7 @@ def _run_stats(cfg: Config) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="decomplexer", description=__doc__)
-    parser.add_argument("--base-url", help="Servlet base URL or bare host (overrides default/env)")
+    parser.add_argument("--base-url", help="servlet base URL or bare host (overrides default/env)")
     parser.add_argument("--data-dir", help="Output directory for DB, files, and logs")
     parser.add_argument("--fetcher", choices=["httpx", "playwright"],
                         help="Network backend (playwright = Chrome clicks + httpx downloads)")
@@ -81,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Show the browser window (playwright backend; for debugging)")
     parser.add_argument("--concurrency", type=int, help="Parallel per-act workers (crawl)")
     parser.add_argument("--min-delay", type=float, help="Min seconds between requests")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Skip TLS cert verification (self-signed legacy server)")
     parser.add_argument("--log-file", help="Path for the persistent audit log "
                         "(default: <data-dir>/logs/decomplexer.log)")
     parser.add_argument("--no-file-log", action="store_true",

@@ -25,7 +25,7 @@ class HybridFetcher:
             launch_kwargs["channel"] = config.browser_channel or "chrome"
             log.debug("launching browser channel=%s", launch_kwargs["channel"])
         self._browser = self._pw.chromium.launch(**launch_kwargs)
-        self._ctx = self._browser.new_context()
+        self._ctx = self._browser.new_context(ignore_https_errors=not config.verify_tls)
         self._page = self._ctx.new_page()
         log.debug("browser ready (headless=%s)", config.headless)
 

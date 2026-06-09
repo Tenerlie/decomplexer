@@ -7,15 +7,15 @@ from urllib.parse import urlsplit, urlunsplit
 
 CHARSET = "iso-8859-2"
 
-DEFAULT_BASE_URL = "http://server.mycompany.com/Akty/Servlet/"
+DEFAULT_BASE_URL = "https://server.mycompany.com/Akty/servlet/"
 
-_SERVLET_PATH = "/Akty/Servlet/"
+_SERVLET_PATH = "/Akty/servlet/"
 
 def normalize_base_url(value: str) -> str:
     value = value.strip()
     had_scheme = "://" in value
     if not had_scheme:
-        value = "http://" + value
+        value = "https://" + value
     parts = urlsplit(value)
     path = parts.path
     if not had_scheme and path in ("", "/"):
@@ -35,13 +35,15 @@ class Config:
     base_url: str = field(default_factory=_default_base_url)
     data_dir: Path = field(default_factory=_default_data_dir)
 
+    verify_tls: bool = True
+
     concurrency: int = 3
     min_delay: float = 0.3
     timeout: float = 60.0
     max_retries: int = 4
     backoff_base: float = 1.5
 
-    fetcher: str = "httpx"
+    fetcher: str = "playwright"
     browser_channel: str = "chrome"
     browser_executable_path: str | None = None
     headless: bool = True

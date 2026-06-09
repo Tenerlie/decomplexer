@@ -49,9 +49,13 @@ class HttpxFetcher:
     def __init__(self, config: Config) -> None:
         self._cfg = config
         self._limiter = _RateLimiter(config.min_delay)
+        if not config.verify_tls:
+            log.warning("TLS verification DISABLED (--insecure): httpx will not "
+                        "check the server certificate")
         self._client = httpx.Client(
             timeout=config.timeout,
             follow_redirects=True,
+            verify=config.verify_tls,
             headers={"User-Agent": "decomplexer/0.1 (acts-harvester)"},
         )
 
